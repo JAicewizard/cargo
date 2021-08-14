@@ -74,7 +74,7 @@ use crate::core::compiler::future_incompat::{
     FutureBreakageItem, FutureIncompatReportPackage, OnDiskReports,
 };
 use crate::core::resolver::ResolveBehavior;
-use crate::core::{FeatureValue, PackageId, Shell, TargetKind};
+use crate::core::{feature, FeatureValue, PackageId, Shell, TargetKind};
 use crate::util::diagnostic_server::{self, DiagnosticPrinter};
 use crate::util::interning::InternedString;
 use crate::util::machine_message::{self, Message as _};
@@ -1251,11 +1251,11 @@ impl<'cfg> DrainState<'cfg> {
             None => return Ok(()),
         };
         let mut features_suggestion: BTreeSet<_> = other_diesel.features.iter().collect();
-        let fmap = other_diesel.pkg.summary().features();
+        let features = other_diesel.pkg.summary().features();
         // Remove any unnecessary features.
-        for feature in &other_diesel.features {
-            if let Some(feats) = fmap.get(feature) {
-                for feat in feats {
+        for remove_feature in &other_diesel.features {
+            if let Some(feats) = feature::get_feature(features, *remove_feature) {
+                for feat in feats.children_values() {
                     if let FeatureValue::Feature(f) = feat {
                         features_suggestion.remove(&f);
                     }

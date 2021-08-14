@@ -2,7 +2,7 @@ use super::dep_cache::RegistryQueryer;
 use super::errors::ActivateResult;
 use super::types::{ConflictMap, ConflictReason, FeaturesSet, ResolveOpts};
 use super::RequestedFeatures;
-use crate::core::{Dependency, PackageId, SourceId, Summary};
+use crate::core::{feature, Dependency, PackageId, SourceId, Summary};
 use crate::util::interning::InternedString;
 use crate::util::Graph;
 use anyhow::format_err;
@@ -175,7 +175,8 @@ impl Context {
                 features,
                 uses_default_features,
             } => {
-                let has_default_feature = summary.features().contains_key("default");
+                let has_default_feature =
+                    feature::contains_feature(summary.features(), InternedString::new("default"));
                 Ok(match self.resolve_features.get(&id) {
                     Some(prev) => {
                         features.is_subset(prev)

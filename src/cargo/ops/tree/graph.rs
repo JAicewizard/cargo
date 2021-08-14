@@ -3,9 +3,10 @@
 use super::TreeOptions;
 use crate::core::compiler::{CompileKind, RustcTargetData};
 use crate::core::dependency::DepKind;
+use crate::core::feature::Feature;
 use crate::core::resolver::features::{CliFeatures, FeaturesFor, ResolvedFeatures};
 use crate::core::resolver::Resolve;
-use crate::core::{FeatureMap, FeatureValue, Package, PackageId, PackageIdSpec, Workspace};
+use crate::core::{feature, FeatureValue, Package, PackageId, PackageIdSpec, Workspace};
 use crate::util::interning::InternedString;
 use crate::util::CargoResult;
 use std::collections::{HashMap, HashSet};
@@ -272,8 +273,8 @@ pub fn build<'a>(
                 opts,
             );
             if opts.graph_features {
-                let fmap = resolve.summary(member_id).features();
-                add_cli_features(&mut graph, member_index, &cli_features, fmap);
+                let features = resolve.summary(member_id).features();
+                add_cli_features(&mut graph, member_index, &cli_features, features);
             }
         }
     }
@@ -460,7 +461,7 @@ fn add_cli_features(
     graph: &mut Graph<'_>,
     package_index: usize,
     cli_features: &CliFeatures,
-    feature_map: &FeatureMap,
+    features: &[Feature],
 ) {
     // NOTE: Recursive enabling of features will be handled by
     // add_internal_features.
@@ -468,7 +469,11 @@ fn add_cli_features(
     // Create a set of feature names requested on the command-line.
     let mut to_add: HashSet<FeatureValue> = HashSet::new();
     if cli_features.all_features {
-        to_add.extend(feature_map.keys().map(|feat| FeatureValue::Feature(*feat)));
+        to_add.extend(
+            features
+                .iter()
+                .map(|feat| FeatureValue::Feature(feat.name())),
+        );
     } else {
         if cli_features.uses_default_features {
             to_add.insert(FeatureValue::Feature(InternedString::new("default")));
@@ -563,12 +568,12 @@ fn add_feature_rec(
     from: usize,
     package_index: usize,
 ) {
-    let feature_map = resolve.summary(package_id).features();
-    let fvs = match feature_map.get(&feature_name) {
+    let features = resolve.summary(package_id).features();
+    let fvs = match feature::get_feature(features, feature_name) {
         Some(fvs) => fvs,
         None => return,
     };
-    for fv in fvs {
+    for fv in fvs.children_values() {
         match fv {
             FeatureValue::Feature(dep_name) => {
                 let feat_index = add_feature(

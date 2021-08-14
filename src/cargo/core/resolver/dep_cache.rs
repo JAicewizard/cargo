@@ -16,7 +16,7 @@ use crate::core::resolver::{
     ActivateError, ActivateResult, CliFeatures, RequestedFeatures, ResolveOpts, VersionOrdering,
     VersionPreferences,
 };
-use crate::core::{Dependency, FeatureValue, PackageId, PackageIdSpec, Registry, Summary};
+use crate::core::{feature, Dependency, FeatureValue, PackageId, PackageIdSpec, Registry, Summary};
 use crate::util::errors::CargoResult;
 use crate::util::interning::InternedString;
 
@@ -301,7 +301,9 @@ fn build_requirements<'a, 'b: 'a>(
     let mut reqs = Requirements::new(s);
 
     let handle_default = |uses_default_features, reqs: &mut Requirements<'_>| {
-        if uses_default_features && s.features().contains_key("default") {
+        if uses_default_features
+            && feature::contains_feature(s.features(), InternedString::new("default"))
+        {
             if let Err(e) = reqs.require_feature(InternedString::new("default")) {
                 return Err(e.into_activate_error(parent, s));
             }
@@ -316,8 +318,8 @@ fn build_requirements<'a, 'b: 'a>(
             uses_default_features,
         }) => {
             if *all_features {
-                for key in s.features().keys() {
-                    if let Err(e) = reqs.require_feature(*key) {
+                for key in s.features().iter().map(|f| f.name()) {
+                    if let Err(e) = reqs.require_feature(key) {
                         return Err(e.into_activate_error(parent, s));
                     }
                 }
@@ -421,18 +423,18 @@ impl Requirements<'_> {
             return Ok(());
         }
 
-        let fvs = match self.summary.features().get(&feat) {
+        let fvs = match feature::get_feature(self.summary.features(), feat) {
             Some(fvs) => fvs,
             None => return Err(RequirementError::MissingFeature(feat)),
         };
 
-        for fv in fvs {
+        for fv in fvs.children_values() {
             if let FeatureValue::Feature(dep_feat) = fv {
                 if *dep_feat == feat {
                     return Err(RequirementError::Cycle(feat));
                 }
             }
-            self.require_value(fv)?;
+            self.require_value(&fv)?;
         }
         Ok(())
     }

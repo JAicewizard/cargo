@@ -39,7 +39,7 @@ use crate::core::compiler::{CompileKind, RustcTargetData};
 use crate::core::dependency::{DepKind, Dependency};
 use crate::core::resolver::types::FeaturesSet;
 use crate::core::resolver::{Resolve, ResolveBehavior};
-use crate::core::{FeatureValue, PackageId, PackageIdSpec, PackageSet, Workspace};
+use crate::core::{feature, FeatureValue, PackageId, PackageIdSpec, PackageSet, Workspace};
 use crate::util::interning::InternedString;
 use crate::util::CargoResult;
 use anyhow::bail;
@@ -587,8 +587,8 @@ impl<'a, 'cfg> FeatureResolver<'a, 'cfg> {
             return Ok(());
         }
         let summary = self.resolve.summary(pkg_id);
-        let feature_map = summary.features();
-        let fvs = match feature_map.get(&feature_to_enable) {
+        let features = summary.features();
+        let fvs = match feature::get_feature(features, feature_to_enable) {
             Some(fvs) => fvs,
             None => {
                 // TODO: this should only happen for optional dependencies.
@@ -602,7 +602,7 @@ impl<'a, 'cfg> FeatureResolver<'a, 'cfg> {
                 return Ok(());
             }
         };
-        for fv in fvs {
+        for fv in fvs.children_values() {
             self.activate_fv(pkg_id, for_host, fv)?;
         }
         Ok(())
@@ -711,14 +711,14 @@ impl<'a, 'cfg> FeatureResolver<'a, 'cfg> {
     /// Returns Vec of FeatureValues from a Dependency definition.
     fn fvs_from_dependency(&self, dep_id: PackageId, dep: &Dependency) -> Vec<FeatureValue> {
         let summary = self.resolve.summary(dep_id);
-        let feature_map = summary.features();
+        let features = summary.features();
         let mut result: Vec<FeatureValue> = dep
             .features()
             .iter()
             .map(|f| FeatureValue::new(*f))
             .collect();
         let default = InternedString::new("default");
-        if dep.uses_default_features() && feature_map.contains_key(&default) {
+        if dep.uses_default_features() && feature::contains_feature(features, default) {
             result.push(FeatureValue::Feature(default));
         }
         result
@@ -731,16 +731,16 @@ impl<'a, 'cfg> FeatureResolver<'a, 'cfg> {
         cli_features: &CliFeatures,
     ) -> Vec<FeatureValue> {
         let summary = self.resolve.summary(pkg_id);
-        let feature_map = summary.features();
+        let features = summary.features();
         if cli_features.all_features {
-            feature_map
-                .keys()
-                .map(|k| FeatureValue::Feature(*k))
+            features
+                .iter()
+                .map(|f| FeatureValue::Feature(f.name()))
                 .collect()
         } else {
             let mut result: Vec<FeatureValue> = cli_features.features.iter().cloned().collect();
             let default = InternedString::new("default");
-            if cli_features.uses_default_features && feature_map.contains_key(&default) {
+            if cli_features.uses_default_features && feature::contains_feature(features, default) {
                 result.push(FeatureValue::Feature(default));
             }
             result

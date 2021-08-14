@@ -67,6 +67,7 @@
 //! hopefully those are more obvious inline in the code itself.
 
 use crate::core::dependency::Dependency;
+use crate::core::feature::Feature;
 use crate::core::{PackageId, SourceId, Summary};
 use crate::sources::registry::{RegistryData, RegistryPackage, INDEX_V_MAX};
 use crate::util::interning::InternedString;
@@ -828,7 +829,16 @@ impl IndexSummary {
                 features.entry(name).or_default().extend(values);
             }
         }
-        let mut summary = Summary::new(config, pkgid, deps, &features, links)?;
+        let mut summary = Summary::new(
+            config,
+            pkgid,
+            deps,
+            features
+                .iter()
+                .map(|(name, values)| Feature::new_feature(*name, None, values.to_vec()))
+                .collect(),
+            links,
+        )?;
         summary.set_checksum(cksum);
         Ok(IndexSummary {
             summary,

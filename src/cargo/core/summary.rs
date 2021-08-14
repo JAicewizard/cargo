@@ -1,6 +1,9 @@
+use crate::core::feature;
+use crate::core::feature::Feature;
 use crate::core::{Dependency, PackageId, SourceId};
 use crate::util::interning::InternedString;
 use crate::util::{CargoResult, Config};
+
 use anyhow::bail;
 use semver::Version;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -22,7 +25,7 @@ pub struct Summary {
 struct Inner {
     package_id: PackageId,
     dependencies: Vec<Dependency>,
-    features: Rc<FeatureMap>,
+    features: Rc<Vec<Feature>>,
     has_namespaced_features: bool,
     has_overlapping_features: Option<InternedString>,
     checksum: Option<String>,
@@ -34,7 +37,7 @@ impl Summary {
         config: &Config,
         pkg_id: PackageId,
         dependencies: Vec<Dependency>,
-        features: &BTreeMap<InternedString, Vec<InternedString>>,
+        features: Vec<Feature>,
         links: Option<impl Into<InternedString>>,
     ) -> CargoResult<Summary> {
         // ****CAUTION**** If you change anything here than may raise a new
@@ -43,7 +46,7 @@ impl Summary {
         let mut has_overlapping_features = None;
         for dep in dependencies.iter() {
             let dep_name = dep.name_in_toml();
-            if features.contains_key(&dep_name) {
+            if feature::contains_feature(&*features, dep_name) {
                 has_overlapping_features = Some(dep_name);
             }
             if dep.is_optional() && !dep.is_transitive() {
@@ -54,7 +57,7 @@ impl Summary {
             }
         }
         let (feature_map, has_namespaced_features) =
-            build_feature_map(config, pkg_id, features, &dependencies)?;
+            build_feature_map(config, pkg_id, &*features, &dependencies)?;
         Ok(Summary {
             inner: Rc::new(Inner {
                 package_id: pkg_id,
@@ -83,7 +86,7 @@ impl Summary {
     pub fn dependencies(&self) -> &[Dependency] {
         &self.inner.dependencies
     }
-    pub fn features(&self) -> &FeatureMap {
+    pub fn features(&self) -> &[Feature] {
         &self.inner.features
     }
 
@@ -109,15 +112,15 @@ impl Summary {
             }
         }
         if !weak_dep_features {
-            for (feat_name, features) in self.features() {
-                for fv in features {
+            for feature in self.features() {
+                for fv in feature.children_values() {
                     if matches!(fv, FeatureValue::DepFeature { weak: true, .. }) {
                         bail!(
                             "optional dependency features with `?` syntax are only \
                              allowed on the nightly channel and requires the \
                              `-Z weak-dep-features` flag on the command line\n\
                              Feature `{}` had feature value `{}`.",
-                            feat_name,
+                            feature.name(),
                             fv
                         );
                     }
@@ -188,10 +191,9 @@ impl Hash for Summary {
 fn build_feature_map(
     config: &Config,
     pkg_id: PackageId,
-    features: &BTreeMap<InternedString, Vec<InternedString>>,
+    features: &[Feature],
     dependencies: &[Dependency],
-) -> CargoResult<(FeatureMap, bool)> {
-    use self::FeatureValue::*;
+) -> CargoResult<(Vec<Feature>, bool)> {
     let mut dep_map = HashMap::new();
     for dep in dependencies.iter() {
         dep_map
@@ -200,25 +202,16 @@ fn build_feature_map(
             .push(dep);
     }
 
-    let mut map: FeatureMap = features
-        .iter()
-        .map(|(feature, list)| {
-            let fvs: Vec<_> = list
-                .iter()
-                .map(|feat_value| FeatureValue::new(*feat_value))
-                .collect();
-            (*feature, fvs)
-        })
-        .collect();
-    let has_namespaced_features = map.values().flatten().any(|fv| fv.has_dep_prefix());
+    let mut map: Vec<Feature> = features.to_vec();
+
+    let has_namespaced_features = map.iter().filter(|fv| fv.is_dep()).count() != 0;
 
     // Add implicit features for optional dependencies if they weren't
     // explicitly listed anywhere.
-    let explicitly_listed: HashSet<_> = map
-        .values()
-        .flatten()
-        .filter_map(|fv| match fv {
-            Dep { dep_name } => Some(*dep_name),
+    let explicitly_listed: Vec<InternedString> = map
+        .iter()
+        .filter_map(|fv| match fv.is_dep() {
+            true => Some(fv.name()),
             _ => None,
         })
         .collect();
@@ -227,38 +220,47 @@ fn build_feature_map(
             continue;
         }
         let dep_name_in_toml = dep.name_in_toml();
-        if features.contains_key(&dep_name_in_toml) || explicitly_listed.contains(&dep_name_in_toml)
+        if features
+            .iter()
+            .find(|fv| fv.name() == dep_name_in_toml)
+            .is_some()
+            || explicitly_listed.contains(&dep_name_in_toml)
         {
             continue;
         }
-        let fv = Dep {
-            dep_name: dep_name_in_toml,
-        };
-        map.insert(dep_name_in_toml, vec![fv]);
+        let mut str = "dep:".to_string();
+        str.push_str(dep_name_in_toml.as_str());
+
+        let platform = dep.platform();
+        map.push(Feature::new_feature(
+            dep_name_in_toml,
+            platform.cloned(),
+            vec![InternedString::new(str.as_str())],
+        ));
     }
 
     // Validate features are listed properly.
-    for (feature, fvs) in &map {
-        if feature.starts_with("dep:") {
+    for feature in &map {
+        if feature.name().starts_with("dep:") {
             bail!(
                 "feature named `{}` is not allowed to start with `dep:`",
                 feature
             );
         }
-        if feature.contains('/') {
+        if feature.name().contains('/') {
             bail!(
                 "feature named `{}` is not allowed to contain slashes",
                 feature
             );
         }
-        validate_feature_name(config, pkg_id, feature)?;
-        for fv in fvs {
+        validate_feature_name(config, pkg_id, &feature.name())?;
+        for fv in feature.children_values() {
             // Find data for the referenced dependency...
             let dep_data = {
                 match fv {
-                    Feature(dep_name) | Dep { dep_name, .. } | DepFeature { dep_name, .. } => {
-                        dep_map.get(dep_name)
-                    }
+                    FeatureValue::Feature(dep_name)
+                    | FeatureValue::Dep { dep_name, .. }
+                    | FeatureValue::DepFeature { dep_name, .. } => dep_map.get(dep_name),
                 }
             };
             let is_optional_dep = dep_data
@@ -267,8 +269,13 @@ fn build_feature_map(
                 .any(|d| d.is_optional());
             let is_any_dep = dep_data.is_some();
             match fv {
-                Feature(f) => {
-                    if !features.contains_key(f) {
+                FeatureValue::Feature(f) => {
+                    if !(features
+                        .iter()
+                        .filter(|feature| feature.name() == *f)
+                        .count()
+                        != 0)
+                    {
                         if !is_any_dep {
                             bail!(
                                 "feature `{}` includes `{}` which is neither a dependency \
@@ -278,7 +285,7 @@ fn build_feature_map(
                             );
                         }
                         if is_optional_dep {
-                            if !map.contains_key(f) {
+                            if !(map.iter().filter(|feature| feature.name() == *f).count() != 0) {
                                 bail!(
                                     "feature `{}` includes `{}`, but `{}` is an \
                                      optional dependency without an implicit feature\n\
@@ -297,7 +304,7 @@ fn build_feature_map(
                         }
                     }
                 }
-                Dep { dep_name } => {
+                FeatureValue::Dep { dep_name } => {
                     if !is_any_dep {
                         bail!(
                             "feature `{}` includes `{}`, but `{}` is not listed as a dependency",
@@ -317,7 +324,7 @@ fn build_feature_map(
                         );
                     }
                 }
-                DepFeature {
+                FeatureValue::DepFeature {
                     dep_name,
                     dep_feature,
                     weak,
@@ -353,10 +360,13 @@ fn build_feature_map(
 
     // Make sure every optional dep is mentioned at least once.
     let used: HashSet<_> = map
-        .values()
+        .iter()
+        .map(|f| f.children_values())
         .flatten()
         .filter_map(|fv| match fv {
-            Dep { dep_name } | DepFeature { dep_name, .. } => Some(dep_name),
+            FeatureValue::Dep { dep_name } | FeatureValue::DepFeature { dep_name, .. } => {
+                Some(dep_name)
+            }
             _ => None,
         })
         .collect();
@@ -430,11 +440,10 @@ impl FeatureValue {
 
 impl fmt::Display for FeatureValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use self::FeatureValue::*;
         match self {
-            Feature(feat) => write!(f, "{}", feat),
-            Dep { dep_name } => write!(f, "dep:{}", dep_name),
-            DepFeature {
+            FeatureValue::Feature(feat) => write!(f, "{}", feat),
+            FeatureValue::Dep { dep_name } => write!(f, "dep:{}", dep_name),
+            FeatureValue::DepFeature {
                 dep_name,
                 dep_feature,
                 weak,

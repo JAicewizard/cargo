@@ -17,6 +17,7 @@ use url::Url;
 
 use crate::core::compiler::{CompileKind, CompileTarget};
 use crate::core::dependency::DepKind;
+use crate::core::feature;
 use crate::core::manifest::{ManifestMetadata, TargetSourcePath, Warnings};
 use crate::core::resolver::ResolveBehavior;
 use crate::core::{Dependency, Manifest, PackageId, Summary, Target};
@@ -1328,7 +1329,12 @@ impl TomlManifest {
             config,
             pkgid,
             deps,
-            me.features.as_ref().unwrap_or(&empty_features),
+            me.features
+                .as_ref()
+                .unwrap_or(&empty_features)
+                .iter()
+                .map(|(name, values)| feature::Feature::new_feature(*name, None, values.to_vec()))
+                .collect(),
             project.links.as_deref(),
         )?;
         let unstable = config.cli_unstable();
@@ -1375,7 +1381,7 @@ impl TomlManifest {
             None | Some(VecStringOrBool::Bool(true)) => None,
         };
 
-        if summary.features().contains_key("default-features") {
+        if feature::contains_feature(summary.features(), InternedString::new("default-features")) {
             warnings.push(
                 "`default-features = [\"..\"]` was found in [features]. \
                  Did you mean to use `default = [\"..\"]`?"

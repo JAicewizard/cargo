@@ -25,6 +25,8 @@ use crate::util::toml::{read_manifest, TomlDependency, TomlProfiles};
 use crate::util::{config::ConfigRelativePath, Config, Filesystem, IntoUrl};
 use cargo_util::paths;
 
+use super::feature;
+
 /// The core abstraction in Cargo for working with a workspace of crates.
 ///
 /// A workspace is often created very early on and then threaded through all
@@ -1150,7 +1152,8 @@ impl<'cfg> Workspace<'cfg> {
 
         // Checks if a member contains the given feature.
         let summary_or_opt_dependency_feature = |feature: &InternedString| -> bool {
-            summary_features.contains_key(feature) || optional_dependency_names.contains(feature)
+            feature::contains_feature(summary_features, *feature)
+                || optional_dependency_names.contains(feature)
         };
 
         for feature in cli_features.features.iter() {
@@ -1226,9 +1229,15 @@ impl<'cfg> Workspace<'cfg> {
             let summary = member.summary();
 
             // Features defined in the manifest
-            summary_features.extend(summary.features().keys());
-            summary_features_per_member
-                .insert(member, summary.features().keys().copied().collect());
+            summary_features.extend(summary.features().iter().map(|feature| feature.name()));
+            summary_features_per_member.insert(
+                member,
+                summary
+                    .features()
+                    .iter()
+                    .map(|feature| feature.name())
+                    .collect(),
+            );
 
             // Dependency name -> dependency
             let dependencies: BTreeMap<InternedString, &Dependency> = summary

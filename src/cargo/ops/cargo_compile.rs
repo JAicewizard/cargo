@@ -35,7 +35,7 @@ use crate::core::compiler::{DefaultExecutor, Executor, UnitInterner};
 use crate::core::profiles::{Profiles, UnitFor};
 use crate::core::resolver::features::{self, CliFeatures, FeaturesFor};
 use crate::core::resolver::{HasDevUnits, Resolve};
-use crate::core::{FeatureValue, Package, PackageSet, Shell, Summary, Target};
+use crate::core::{feature, FeatureValue, Package, PackageSet, Shell, Summary, Target};
 use crate::core::{PackageId, PackageIdSpec, SourceId, TargetKind, Workspace};
 use crate::drop_println;
 use crate::ops;
@@ -1213,11 +1213,11 @@ fn validate_required_features(
         Some(resolve) => resolve,
     };
 
-    for feature in required_features {
-        let fv = FeatureValue::new(feature.into());
+    for required_feature in required_features {
+        let fv = FeatureValue::new(required_feature.into());
         match &fv {
             FeatureValue::Feature(f) => {
-                if !summary.features().contains_key(f) {
+                if !feature::contains_feature(summary.features(), *f) {
                     shell.warn(format!(
                         "invalid feature `{}` in required-features of target `{}`: \
                         `{}` is not present in [features] section",
@@ -1253,7 +1253,7 @@ fn validate_required_features(
                 {
                     Some((dep_id, _deps)) => {
                         let dep_summary = resolve.summary(dep_id);
-                        if !dep_summary.features().contains_key(dep_feature)
+                        if !feature::contains_feature(dep_summary.features(), *dep_feature)
                             && !dep_summary
                                 .dependencies()
                                 .iter()

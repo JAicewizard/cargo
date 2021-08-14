@@ -3,6 +3,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::hash;
+use std::iter::FromIterator;
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -221,20 +222,18 @@ impl Package {
             .filter(|t| t.src_path().is_path())
             .cloned()
             .collect();
+        //TODO: this should be a ver or slice not a BTreeMap
         let features = if config.cli_unstable().namespaced_features {
             // Convert Vec<FeatureValue> to Vec<InternedString>
-            summary
-                .features()
-                .iter()
-                .map(|(k, v)| {
-                    (
-                        *k,
-                        v.iter()
-                            .map(|fv| InternedString::new(&fv.to_string()))
-                            .collect(),
-                    )
-                })
-                .collect()
+            BTreeMap::from_iter(summary.features().iter().map(|f| {
+                (
+                    f.name(),
+                    f.children_values()
+                        .iter()
+                        .map(|fv| InternedString::new(&fv.to_string()))
+                        .collect(),
+                )
+            }))
         } else {
             self.manifest()
                 .original()

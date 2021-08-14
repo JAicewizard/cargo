@@ -70,8 +70,9 @@ impl Feature {
         }
     }
 
+    //TODO: Add a method to return the FeatureValue
     pub fn name(&self) -> InternedString {
-        self.inner.name.to_string()
+        InternedString::new(self.inner.name.to_string().as_str())
     }
 
     /// If none, this dependencies must be built for all platforms.
@@ -79,7 +80,6 @@ impl Feature {
     pub fn platform(&self) -> Option<&Platform> {
         self.inner.platform.as_ref()
     }
-
 
     pub fn children_values(&self) -> &Vec<FeatureValue> {
         &self.inner.child_feature_values
@@ -120,4 +120,12 @@ impl fmt::Display for Feature {
             self.children_values()
         )
     }
+}
+
+pub fn contains_feature(vec: &[Feature], name: InternedString) -> bool {
+    vec.iter().find(|f| f.name() == name).is_some()
+}
+
+pub fn get_feature(vec: &[Feature], name: InternedString) -> Option<&Feature> {
+    vec.iter().find(|f| f.name() == name)
 }
