@@ -75,6 +75,10 @@ impl Feature {
         InternedString::new(self.inner.name.to_string().as_str())
     }
 
+    pub fn featurevalue(&self) -> FeatureValue {
+        self.inner.name.clone()
+    }
+
     /// If none, this dependencies must be built for all platforms.
     /// If some, it must only be built for the specified platform.
     pub fn platform(&self) -> Option<&Platform> {

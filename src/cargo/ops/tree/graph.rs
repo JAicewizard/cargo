@@ -469,11 +469,7 @@ fn add_cli_features(
     // Create a set of feature names requested on the command-line.
     let mut to_add: HashSet<FeatureValue> = HashSet::new();
     if cli_features.all_features {
-        to_add.extend(
-            features
-                .iter()
-                .map(|feat| FeatureValue::Feature(feat.name())),
-        );
+        to_add.extend(features.iter().map(|feat| feat.featurevalue()));
     } else {
         if cli_features.uses_default_features {
             to_add.insert(FeatureValue::Feature(InternedString::new("default")));

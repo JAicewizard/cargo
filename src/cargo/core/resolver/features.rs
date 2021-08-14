@@ -733,10 +733,7 @@ impl<'a, 'cfg> FeatureResolver<'a, 'cfg> {
         let summary = self.resolve.summary(pkg_id);
         let features = summary.features();
         if cli_features.all_features {
-            features
-                .iter()
-                .map(|f| FeatureValue::Feature(f.name()))
-                .collect()
+            features.iter().map(|f| f.featurevalue()).collect()
         } else {
             let mut result: Vec<FeatureValue> = cli_features.features.iter().cloned().collect();
             let default = InternedString::new("default");
