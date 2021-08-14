@@ -1,5 +1,8 @@
 use crate::command_prelude::*;
-use cargo::ops;
+use cargo::{
+    core::compiler::CompileKind,
+    ops::{self},
+};
 use std::path::PathBuf;
 
 pub fn cli() -> App {
@@ -101,6 +104,18 @@ https://github.com/rust-lang/cargo/issues/new
         .value_of_os("path")
         .map(|val| PathBuf::from(val.to_os_string()))
         .unwrap_or_else(|| PathBuf::from("vendor"));
+
+    let requested_targets = if args.is_present("all-targets") {
+        config
+            .shell()
+            .warn("the --all-targets flag has been changed to --target=all")?;
+        vec!["all".to_string()]
+    } else {
+        args._values_of("target")
+    };
+
+    let requested_kinds = CompileKind::from_requested_targets(ws.config(), &requested_targets)?;
+
     ops::vendor(
         &ws,
         &ops::VendorOptions {
@@ -113,6 +128,7 @@ https://github.com/rust-lang/cargo/issues/new
                 .map(|s| PathBuf::from(s.to_os_string()))
                 .collect(),
         },
+        &requested_kinds,
     )?;
     Ok(())
 }

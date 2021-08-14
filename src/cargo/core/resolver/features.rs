@@ -383,7 +383,7 @@ pub struct FeatureResolver<'a, 'cfg> {
     ws: &'a Workspace<'cfg>,
     target_data: &'a RustcTargetData<'cfg>,
     /// The platforms to build for, requested by the user.
-    requested_targets: &'a [CompileKind],
+    requested_kinds: &'a [CompileKind],
     resolve: &'a Resolve,
     package_set: &'a PackageSet<'cfg>,
     /// Options that change how the feature resolver operates.
@@ -422,7 +422,7 @@ impl<'a, 'cfg> FeatureResolver<'a, 'cfg> {
         package_set: &'a PackageSet<'cfg>,
         cli_features: &CliFeatures,
         specs: &[PackageIdSpec],
-        requested_targets: &[CompileKind],
+        requested_kinds: &[CompileKind],
         opts: FeatureOpts,
     ) -> CargoResult<ResolvedFeatures> {
         use crate::util::profile;
@@ -442,7 +442,7 @@ impl<'a, 'cfg> FeatureResolver<'a, 'cfg> {
         let mut r = FeatureResolver {
             ws,
             target_data,
-            requested_targets,
+            requested_kinds,
             resolve,
             package_set,
             opts,
@@ -586,9 +586,15 @@ impl<'a, 'cfg> FeatureResolver<'a, 'cfg> {
             // Already enabled.
             return Ok(());
         }
+
         let summary = self.resolve.summary(pkg_id);
         let features = summary.features();
-        let fvs = match feature::get_feature(features, feature_to_enable) {
+        let fvs = match feature::get_feature_target(
+            features,
+            feature_to_enable,
+            self.target_data,
+            self.requested_kinds,
+        ) {
             Some(fvs) => fvs,
             None => {
                 // TODO: this should only happen for optional dependencies.
@@ -603,7 +609,7 @@ impl<'a, 'cfg> FeatureResolver<'a, 'cfg> {
             }
         };
         for fv in fvs.children_values() {
-            self.activate_fv(pkg_id, for_host, fv)?;
+            self.activate_fv(pkg_id, for_host, &fv)?;
         }
         Ok(())
     }
@@ -761,7 +767,7 @@ impl<'a, 'cfg> FeatureResolver<'a, 'cfg> {
                     .dep_platform_activated(dep, CompileKind::Host);
             }
             // Not a build dependency, and not for a build script, so must be Target.
-            self.requested_targets
+            self.requested_kinds
                 .iter()
                 .any(|kind| self.target_data.dep_platform_activated(dep, *kind))
         };

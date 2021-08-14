@@ -17,12 +17,14 @@ pub fn fetch<'a>(
     options: &FetchOptions<'a>,
 ) -> CargoResult<(Resolve, PackageSet<'a>)> {
     ws.emit_warnings()?;
-    let (packages, resolve) = ops::resolve_ws(ws)?;
 
     let jobs = Some(1);
     let config = ws.config();
     let build_config = BuildConfig::new(config, jobs, &options.targets, CompileMode::Build)?;
     let data = RustcTargetData::new(ws, &build_config.requested_kinds)?;
+
+    let (packages, resolve) = ops::resolve_ws(ws, &*build_config.requested_kinds)?;
+
     let mut fetched_packages = HashSet::new();
     let mut deps_to_fetch = ws.members().map(|p| p.package_id()).collect::<Vec<_>>();
     let mut to_download = Vec::new();

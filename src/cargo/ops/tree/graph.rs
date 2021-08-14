@@ -3,10 +3,10 @@
 use super::TreeOptions;
 use crate::core::compiler::{CompileKind, RustcTargetData};
 use crate::core::dependency::DepKind;
-use crate::core::feature::Feature;
+use crate::core::feature::{self, Feature};
 use crate::core::resolver::features::{CliFeatures, FeaturesFor, ResolvedFeatures};
 use crate::core::resolver::Resolve;
-use crate::core::{feature, FeatureValue, Package, PackageId, PackageIdSpec, Workspace};
+use crate::core::{FeatureValue, Package, PackageId, PackageIdSpec, Workspace};
 use crate::util::interning::InternedString;
 use crate::util::CargoResult;
 use std::collections::{HashMap, HashSet};
@@ -279,7 +279,7 @@ pub fn build<'a>(
         }
     }
     if opts.graph_features {
-        add_internal_features(&mut graph, resolve);
+        add_internal_features(&mut graph, resolve, target_data, requested_kinds);
     }
     Ok(graph)
 }
@@ -525,7 +525,12 @@ fn add_cli_features(
 
 /// Recursively adds connections between features in the `[features]` table
 /// for every package.
-fn add_internal_features(graph: &mut Graph<'_>, resolve: &Resolve) {
+fn add_internal_features(
+    graph: &mut Graph<'_>,
+    resolve: &Resolve,
+    target_data: &RustcTargetData<'_>,
+    requested_kinds: &[CompileKind],
+) {
     // Collect features already activated by dependencies or command-line.
     let feature_nodes: Vec<(PackageId, usize, usize, InternedString)> = graph
         .nodes
@@ -539,7 +544,6 @@ fn add_internal_features(graph: &mut Graph<'_>, resolve: &Resolve) {
             }
         })
         .collect();
-
     for (package_id, package_index, feature_index, feature_name) in feature_nodes {
         add_feature_rec(
             graph,
@@ -548,6 +552,8 @@ fn add_internal_features(graph: &mut Graph<'_>, resolve: &Resolve) {
             package_id,
             feature_index,
             package_index,
+            target_data,
+            requested_kinds,
         );
     }
 }
@@ -563,12 +569,16 @@ fn add_feature_rec(
     package_id: PackageId,
     from: usize,
     package_index: usize,
+    target_data: &RustcTargetData<'_>,
+    requested_kinds: &[CompileKind],
 ) {
     let features = resolve.summary(package_id).features();
-    let fvs = match feature::get_feature(features, feature_name) {
-        Some(fvs) => fvs,
-        None => return,
-    };
+
+    let fvs =
+        match feature::get_feature_target(features, feature_name, target_data, requested_kinds) {
+            Some(fvs) => fvs,
+            None => return,
+        };
     for fv in fvs.children_values() {
         match fv {
             FeatureValue::Feature(dep_name) => {
@@ -586,6 +596,8 @@ fn add_feature_rec(
                     package_id,
                     feat_index,
                     package_index,
+                    target_data,
+                    requested_kinds,
                 );
             }
             // Dependencies are already shown in the graph as dep edges. I'm
@@ -643,6 +655,8 @@ fn add_feature_rec(
                         dep_pkg_id,
                         feat_index,
                         dep_index,
+                        target_data,
+                        requested_kinds,
                     );
                 }
             }

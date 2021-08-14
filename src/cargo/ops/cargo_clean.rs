@@ -59,7 +59,7 @@ pub fn clean(ws: &Workspace<'_>, opts: &CleanOptions<'_>) -> CargoResult<()> {
     // Clean specific packages.
     let requested_kinds = CompileKind::from_requested_targets(config, &opts.targets)?;
     let target_data = RustcTargetData::new(ws, &requested_kinds)?;
-    let (pkg_set, resolve) = ops::resolve_ws(ws)?;
+    let (pkg_set, resolve) = ops::resolve_ws(ws, &requested_kinds)?;
     let prof_dir_name = profiles.get_dir_name();
     let host_layout = Layout::new(ws, None, &prof_dir_name)?;
     // Convert requested kinds to a Vec of layouts.

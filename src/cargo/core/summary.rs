@@ -220,9 +220,10 @@ fn build_feature_map(
             continue;
         }
         let dep_name_in_toml = dep.name_in_toml();
+        let platform = dep.platform();
         if features
             .iter()
-            .find(|fv| fv.name() == dep_name_in_toml)
+            .find(|fv| fv.name() == dep_name_in_toml && fv.platform() == platform)
             .is_some()
             || explicitly_listed.contains(&dep_name_in_toml)
         {
@@ -231,7 +232,6 @@ fn build_feature_map(
         let mut str = "dep:".to_string();
         str.push_str(dep_name_in_toml.as_str());
 
-        let platform = dep.platform();
         map.push(Feature::new_feature(
             dep_name_in_toml,
             platform.cloned(),
@@ -270,12 +270,7 @@ fn build_feature_map(
             let is_any_dep = dep_data.is_some();
             match fv {
                 FeatureValue::Feature(f) => {
-                    if !(features
-                        .iter()
-                        .filter(|feature| feature.name() == *f)
-                        .count()
-                        != 0)
-                    {
+                    if !feature::contains_feature(features, *f) {
                         if !is_any_dep {
                             bail!(
                                 "feature `{}` includes `{}` which is neither a dependency \
@@ -435,6 +430,22 @@ impl FeatureValue {
     /// Returns `true` if this feature explicitly used `dep:` syntax.
     pub fn has_dep_prefix(&self) -> bool {
         matches!(self, FeatureValue::Dep { .. })
+    }
+
+    pub fn to_string(&self) -> InternedString {
+        match self {
+            FeatureValue::Feature(feature) => *feature,
+            FeatureValue::Dep { dep_name: name } => *name,
+            FeatureValue::DepFeature {
+                dep_name: name,
+                dep_feature: feature,
+                weak: _,
+            } => {
+                let mut str = name.to_string();
+                str.push_str(feature.as_str());
+                InternedString::new(str.as_str())
+            }
+        }
     }
 }
 

@@ -32,6 +32,17 @@ pub fn exec(config: &mut Config, args: &ArgMatches<'_>) -> CliResult {
         print_available_packages(&ws)?;
     }
 
+    let requested_targets = if args.is_present("all-targets") {
+        config
+            .shell()
+            .warn("the --all-targets flag has been changed to --target=all")?;
+        vec!["all".to_string()]
+    } else {
+        args._values_of("target")
+    };
+
+    let target = ops::tree::Target::from_cli(requested_targets);
+
     let update_opts = UpdateOptions {
         aggressive: args.is_present("aggressive"),
         precise: args.value_of("precise"),
@@ -39,6 +50,7 @@ pub fn exec(config: &mut Config, args: &ArgMatches<'_>) -> CliResult {
         dry_run: args.is_present("dry-run"),
         workspace: args.is_present("workspace"),
         config,
+        target,
     };
     ops::update_lockfile(&ws, &update_opts)?;
     Ok(())

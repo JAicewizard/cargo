@@ -9,6 +9,7 @@
 //!
 //! This module impl that cache in all the gory details
 
+use crate::core::compiler::{CompileKind, RustcTargetData};
 use crate::core::resolver::context::Context;
 use crate::core::resolver::errors::describe_path;
 use crate::core::resolver::types::{ConflictReason, DepInfo, FeaturesSet};
@@ -192,6 +193,8 @@ impl<'a> RegistryQueryer<'a> {
         parent: Option<PackageId>,
         candidate: &Summary,
         opts: &ResolveOpts,
+        target_data: &RustcTargetData<'_>, //TODO: Should this be in the opts?
+        requested_kinds: &[CompileKind],
     ) -> ActivateResult<Rc<(HashSet<InternedString>, Rc<Vec<DepInfo>>)>> {
         // if we have calculated a result before, then we can just return it,
         // as it is a "pure" query of its arguments.
@@ -205,7 +208,8 @@ impl<'a> RegistryQueryer<'a> {
         // First, figure out our set of dependencies based on the requested set
         // of features. This also calculates what features we're going to enable
         // for our own dependencies.
-        let (used_features, deps) = resolve_features(parent, candidate, opts)?;
+        let (used_features, deps) =
+            resolve_features(parent, candidate, opts, target_data, requested_kinds)?;
 
         // Next, transform all dependencies into a list of possible candidates
         // which can satisfy that dependency.
@@ -246,12 +250,14 @@ pub fn resolve_features<'b>(
     parent: Option<PackageId>,
     s: &'b Summary,
     opts: &'b ResolveOpts,
+    target_data: &RustcTargetData<'_>, //TODO: Should this be in the opts?
+    requested_kinds: &[CompileKind],
 ) -> ActivateResult<(HashSet<InternedString>, Vec<(Dependency, FeaturesSet)>)> {
     // First, filter by dev-dependencies.
     let deps = s.dependencies();
     let deps = deps.iter().filter(|d| d.is_transitive() || opts.dev_deps);
 
-    let reqs = build_requirements(parent, s, opts)?;
+    let reqs = build_requirements(parent, s, opts, target_data, requested_kinds)?;
     let mut ret = Vec::new();
     let default_dep = BTreeSet::new();
     let mut valid_dep_names = HashSet::new();
@@ -283,6 +289,7 @@ pub fn resolve_features<'b>(
     for dep_name in reqs.deps.keys() {
         if !valid_dep_names.contains(dep_name) {
             let e = RequirementError::MissingDependency(*dep_name);
+            println!("AA");
             return Err(e.into_activate_error(parent, s));
         }
     }
@@ -297,6 +304,8 @@ fn build_requirements<'a, 'b: 'a>(
     parent: Option<PackageId>,
     s: &'a Summary,
     opts: &'b ResolveOpts,
+    target_data: &RustcTargetData<'_>, //TODO: Should this be in the opts?
+    requested_kinds: &[CompileKind],
 ) -> ActivateResult<Requirements<'a>> {
     let mut reqs = Requirements::new(s);
 
@@ -304,7 +313,9 @@ fn build_requirements<'a, 'b: 'a>(
         if uses_default_features
             && feature::contains_feature(s.features(), InternedString::new("default"))
         {
-            if let Err(e) = reqs.require_feature(InternedString::new("default")) {
+            if let Err(e) =
+                reqs.require_feature(InternedString::new("default"), target_data, requested_kinds)
+            {
                 return Err(e.into_activate_error(parent, s));
             }
         }
@@ -319,13 +330,14 @@ fn build_requirements<'a, 'b: 'a>(
         }) => {
             if *all_features {
                 for key in s.features().iter().map(|f| f.name()) {
-                    if let Err(e) = reqs.require_feature(key) {
+                    if let Err(e) = reqs.require_feature(key, target_data, requested_kinds) {
                         return Err(e.into_activate_error(parent, s));
                     }
                 }
             } else {
                 for fv in features.iter() {
-                    if let Err(e) = reqs.require_value(fv) {
+                    if let Err(e) = reqs.require_value(fv, target_data, requested_kinds) {
+                        println!("DDD");
                         return Err(e.into_activate_error(parent, s));
                     }
                 }
@@ -337,7 +349,8 @@ fn build_requirements<'a, 'b: 'a>(
             uses_default_features,
         } => {
             for feature in features.iter() {
-                if let Err(e) = reqs.require_feature(*feature) {
+                if let Err(e) = reqs.require_feature(*feature, target_data, requested_kinds) {
+                    println!("EEE");
                     return Err(e.into_activate_error(parent, s));
                 }
             }
@@ -396,6 +409,8 @@ impl Requirements<'_> {
         package: InternedString,
         feat: InternedString,
         weak: bool,
+        target_data: &RustcTargetData<'_>,
+        requested_kinds: &[CompileKind],
     ) -> Result<(), RequirementError> {
         // If `package` is indeed an optional dependency then we activate the
         // feature named `package`, but otherwise if `package` is a required
@@ -407,7 +422,7 @@ impl Requirements<'_> {
                 .iter()
                 .any(|dep| dep.name_in_toml() == package && dep.is_optional())
         {
-            self.require_feature(package)?;
+            self.require_feature(package, target_data, requested_kinds)?;
         }
         self.deps.entry(package).or_default().insert(feat);
         Ok(())
@@ -417,31 +432,55 @@ impl Requirements<'_> {
         self.deps.entry(pkg).or_default();
     }
 
-    fn require_feature(&mut self, feat: InternedString) -> Result<(), RequirementError> {
+    fn require_feature(
+        &mut self,
+        feat: InternedString,
+        target_data: &RustcTargetData<'_>,
+        requested_kinds: &[CompileKind],
+    ) -> Result<(), RequirementError> {
         if !self.features.insert(feat) {
             // Already seen this feature.
             return Ok(());
         }
-
-        let fvs = match feature::get_feature(self.summary.features(), feat) {
-            Some(fvs) => fvs,
-            None => return Err(RequirementError::MissingFeature(feat)),
+        // we when a dependency is available on another target, we shouldnt error.
+        // TODO: Should this also be the case for features?
+        let available_other_target = feature::contains_feature(self.summary.features(), feat);
+        let fvs = match feature::get_feature_target(
+            self.summary.features(),
+            feat,
+            target_data,
+            requested_kinds,
+        ) {
+            Some(fv) => fv.children_values().to_vec(),
+            None => {
+                if available_other_target {
+                    return Ok(());
+                } else {
+                    return Err(RequirementError::MissingFeature(feat));
+                }
+            }
         };
-
-        for fv in fvs.children_values() {
+        for fv in fvs {
             if let FeatureValue::Feature(dep_feat) = fv {
-                if *dep_feat == feat {
+                if dep_feat == feat {
                     return Err(RequirementError::Cycle(feat));
                 }
             }
-            self.require_value(&fv)?;
+            self.require_value(&fv, target_data, requested_kinds)?
         }
         Ok(())
     }
 
-    fn require_value(&mut self, fv: &FeatureValue) -> Result<(), RequirementError> {
+    fn require_value(
+        &mut self,
+        fv: &FeatureValue,
+        target_data: &RustcTargetData<'_>,
+        requested_kinds: &[CompileKind],
+    ) -> Result<(), RequirementError> {
         match fv {
-            FeatureValue::Feature(feat) => self.require_feature(*feat)?,
+            FeatureValue::Feature(feat) => {
+                self.require_feature(*feat, target_data, requested_kinds)?
+            }
             FeatureValue::Dep { dep_name } => self.require_dependency(*dep_name),
             FeatureValue::DepFeature {
                 dep_name,
@@ -450,7 +489,13 @@ impl Requirements<'_> {
                 // resolver. They will be narrowed inside the new feature
                 // resolver.
                 weak,
-            } => self.require_dep_feature(*dep_name, *dep_feature, *weak)?,
+            } => self.require_dep_feature(
+                *dep_name,
+                *dep_feature,
+                *weak,
+                target_data,
+                requested_kinds,
+            )?,
         };
         Ok(())
     }

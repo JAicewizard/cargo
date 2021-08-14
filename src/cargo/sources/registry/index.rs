@@ -829,16 +829,11 @@ impl IndexSummary {
                 features.entry(name).or_default().extend(values);
             }
         }
-        let mut summary = Summary::new(
-            config,
-            pkgid,
-            deps,
-            features
-                .iter()
-                .map(|(name, values)| Feature::new_feature(*name, None, values.to_vec()))
-                .collect(),
-            links,
-        )?;
+        let features = features
+            .iter()
+            .map(|(feature, values)| Feature::new_feature(*feature, None, values.clone()))
+            .collect();
+        let mut summary = Summary::new(config, pkgid, deps, features, links)?;
         summary.set_checksum(cksum);
         Ok(IndexSummary {
             summary,

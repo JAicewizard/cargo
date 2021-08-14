@@ -74,6 +74,8 @@ pub use self::resolve::{Resolve, ResolveVersion};
 pub use self::types::{ResolveBehavior, ResolveOpts};
 pub use self::version_prefs::{VersionOrdering, VersionPreferences};
 
+use super::compiler::{CompileKind, RustcTargetData};
+
 mod conflict_cache;
 mod context;
 mod dep_cache;
@@ -126,6 +128,8 @@ pub fn resolve(
     version_prefs: &VersionPreferences,
     config: Option<&Config>,
     check_public_visible_dependencies: bool,
+    target_data: &RustcTargetData<'_>,
+    requested_kinds: &[CompileKind],
 ) -> CargoResult<Resolve> {
     let cx = Context::new(check_public_visible_dependencies);
     let _p = profile::start("resolving");
@@ -135,7 +139,14 @@ pub fn resolve(
     };
     let mut registry =
         RegistryQueryer::new(registry, replacements, version_prefs, minimal_versions);
-    let cx = activate_deps_loop(cx, &mut registry, summaries, config)?;
+    let cx = activate_deps_loop(
+        cx,
+        &mut registry,
+        summaries,
+        config,
+        target_data,
+        requested_kinds,
+    )?;
 
     let mut cksums = HashMap::new();
     for (summary, _) in cx.activations.values() {
@@ -182,6 +193,8 @@ fn activate_deps_loop(
     registry: &mut RegistryQueryer<'_>,
     summaries: &[(Summary, ResolveOpts)],
     config: Option<&Config>,
+    target_data: &RustcTargetData<'_>, //TODO: Should this be in the opts?
+    requested_kinds: &[CompileKind],
 ) -> CargoResult<Context> {
     let mut backtrack_stack = Vec::new();
     let mut remaining_deps = RemainingDeps::new();
@@ -193,7 +206,15 @@ fn activate_deps_loop(
     // Activate all the initial summaries to kick off some work.
     for &(ref summary, ref opts) in summaries {
         debug!("initial activation: {}", summary.package_id());
-        let res = activate(&mut cx, registry, None, summary.clone(), opts);
+        let res = activate(
+            &mut cx,
+            registry,
+            None,
+            summary.clone(),
+            opts,
+            target_data,
+            requested_kinds,
+        );
         match res {
             Ok(Some((frame, _))) => remaining_deps.push(frame),
             Ok(None) => (),
@@ -391,7 +412,15 @@ fn activate_deps_loop(
                 dep.package_name(),
                 candidate.version()
             );
-            let res = activate(&mut cx, registry, Some((&parent, &dep)), candidate, &opts);
+            let res = activate(
+                &mut cx,
+                registry,
+                Some((&parent, &dep)),
+                candidate,
+                &opts,
+                target_data,
+                requested_kinds,
+            );
 
             let successfully_activated = match res {
                 // Success! We've now activated our `candidate` in our context
@@ -604,6 +633,8 @@ fn activate(
     parent: Option<(&Summary, &Dependency)>,
     candidate: Summary,
     opts: &ResolveOpts,
+    target_data: &RustcTargetData<'_>, //TODO: Should this be in the opts?
+    requested_kinds: &[CompileKind],
 ) -> ActivateResult<Option<(DepsFrame, Duration)>> {
     let candidate_pid = candidate.package_id();
     cx.age += 1;
@@ -654,8 +685,14 @@ fn activate(
     };
 
     let now = Instant::now();
-    let (used_features, deps) =
-        &*registry.build_deps(cx, parent.map(|p| p.0.package_id()), &candidate, opts)?;
+    let (used_features, deps) = &*registry.build_deps(
+        cx,
+        parent.map(|p| p.0.package_id()),
+        &candidate,
+        opts,
+        target_data,
+        requested_kinds,
+    )?;
 
     // Record what list of features is active for this package.
     if !used_features.is_empty() {

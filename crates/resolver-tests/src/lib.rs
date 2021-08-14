@@ -169,14 +169,7 @@ pub fn resolve_with_config_raw(
         list: registry,
         used: HashSet::new(),
     };
-    let summary = Summary::new(
-        config,
-        pkg_id("root"),
-        deps,
-        &BTreeMap::new(),
-        None::<&String>,
-    )
-    .unwrap();
+    let summary = Summary::new(config, pkg_id("root"), deps, Vec::new(), None::<&String>).unwrap();
     let opts = ResolveOpts::everything();
     let start = Instant::now();
     let resolve = resolver::resolve(
@@ -574,7 +567,7 @@ pub fn pkg_dep<T: ToPkgId>(name: T, dep: Vec<Dependency>) -> Summary {
         &Config::default().unwrap(),
         name.to_pkgid(),
         dep,
-        &BTreeMap::new(),
+        Vec::new(),
         link,
     )
     .unwrap()
@@ -602,7 +595,7 @@ pub fn pkg_loc(name: &str, loc: &str) -> Summary {
         &Config::default().unwrap(),
         pkg_id_loc(name, loc),
         Vec::new(),
-        &BTreeMap::new(),
+        Vec::new(),
         link,
     )
     .unwrap()
@@ -616,7 +609,7 @@ pub fn remove_dep(sum: &Summary, ind: usize) -> Summary {
         &Config::default().unwrap(),
         sum.package_id(),
         deps,
-        &BTreeMap::new(),
+        Vec::new(),
         sum.links().map(|a| a.as_str()),
     )
     .unwrap()

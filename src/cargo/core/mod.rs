@@ -14,6 +14,7 @@ pub use self::workspace::{MaybePackage, Workspace, WorkspaceConfig, WorkspaceRoo
 
 pub mod compiler;
 pub mod dependency;
+pub mod feature;
 pub mod features;
 pub mod manifest;
 pub mod package;
@@ -26,4 +27,3 @@ pub mod shell;
 pub mod source;
 pub mod summary;
 mod workspace;
-pub mod feature;

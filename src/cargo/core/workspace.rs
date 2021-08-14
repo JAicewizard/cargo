@@ -1229,14 +1229,10 @@ impl<'cfg> Workspace<'cfg> {
             let summary = member.summary();
 
             // Features defined in the manifest
-            summary_features.extend(summary.features().iter().map(|feature| feature.name()));
+            summary_features.extend(summary.features().iter().map(|f| f.name()));
             summary_features_per_member.insert(
                 member,
-                summary
-                    .features()
-                    .iter()
-                    .map(|feature| feature.name())
-                    .collect(),
+                summary.features().iter().map(|f| f.name()).collect(),
             );
 
             // Dependency name -> dependency

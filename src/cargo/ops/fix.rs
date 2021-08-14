@@ -235,7 +235,7 @@ fn check_resolver_change(ws: &Workspace<'_>, opts: &FixOptions) -> CargoResult<(
     let ws_resolve = ops::resolve_ws_with_opts(
         ws,
         &target_data,
-        &opts.compile_opts.build_config.requested_kinds,
+        &*opts.compile_opts.build_config.requested_kinds,
         &opts.compile_opts.cli_features,
         &specs,
         HasDevUnits::No,

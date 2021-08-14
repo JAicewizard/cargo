@@ -8,6 +8,7 @@ use std::str;
 use anyhow::{anyhow, bail, Context as _};
 use cargo_platform::Platform;
 use cargo_util::paths;
+use itertools::Itertools;
 use log::{debug, trace};
 use semver::{self, VersionReq};
 use serde::de;
@@ -29,6 +30,8 @@ use crate::util::interning::InternedString;
 use crate::util::{
     self, config::ConfigRelativePath, validate_package_name, Config, IntoUrl, VersionReqExt,
 };
+
+use crate::core::feature::Feature as tomlFeature;
 
 mod targets;
 use self::targets::targets;
@@ -1027,6 +1030,7 @@ impl TomlManifest {
                         Ok((
                             k.clone(),
                             TomlPlatform {
+                                features: None,
                                 dependencies: map_deps(config, v.dependencies.as_ref(), all)?,
                                 dev_dependencies: map_deps(
                                     config,
@@ -1115,8 +1119,12 @@ impl TomlManifest {
 
         // Parse features first so they will be available when parsing other parts of the TOML.
         let empty = Vec::new();
-        let cargo_features = me.cargo_features.as_ref().unwrap_or(&empty);
-        let features = Features::new(cargo_features, config, &mut warnings, source_id.is_path())?;
+        let cargo_features = Features::new(
+            me.cargo_features.as_ref().unwrap_or(&empty),
+            config,
+            &mut warnings,
+            source_id.is_path(),
+        )?;
 
         let project = me.project.as_ref().or_else(|| me.package.as_ref());
         let project = project.ok_or_else(|| anyhow!("no `package` section found"))?;
@@ -1131,7 +1139,7 @@ impl TomlManifest {
         let pkgid = project.to_package_id(source_id)?;
 
         let edition = if let Some(ref edition) = project.edition {
-            features
+            cargo_features
                 .require(Feature::edition())
                 .with_context(|| "editions are unstable")?;
             edition
@@ -1141,7 +1149,7 @@ impl TomlManifest {
             Edition::Edition2015
         };
         if edition == Edition::Edition2021 {
-            features.require(Feature::edition2021())?;
+            cargo_features.require(Feature::edition2021())?;
         } else if !edition.is_stable() {
             // Guard in case someone forgets to add .require()
             return Err(util::errors::internal(format!(
@@ -1175,7 +1183,7 @@ impl TomlManifest {
         };
 
         if project.metabuild.is_some() {
-            features.require(Feature::metabuild())?;
+            cargo_features.require(Feature::metabuild())?;
         }
 
         if project.resolver.is_some()
@@ -1184,7 +1192,7 @@ impl TomlManifest {
                 .as_ref()
                 .map_or(false, |ws| ws.resolver.is_some())
         {
-            features.require(Feature::resolver())?;
+            cargo_features.require(Feature::resolver())?;
         }
         let resolve_behavior = match (
             project.resolver.as_ref(),
@@ -1201,7 +1209,7 @@ impl TomlManifest {
         // If we have a lib with a path, we're done.
         // If we have a lib with no path, use the inferred lib or else the package name.
         let targets = targets(
-            &features,
+            &cargo_features,
             me,
             package_name,
             package_root,
@@ -1239,6 +1247,15 @@ impl TomlManifest {
         let replace;
         let patch;
 
+        let empty_features = BTreeMap::new();
+        let mut features: Vec<tomlFeature> = me
+            .features
+            .clone()
+            .unwrap_or(empty_features)
+            .iter()
+            .map(|(key, value)| tomlFeature::new_feature(*key, None, value.clone()))
+            .collect_vec();
+
         {
             let mut cx = Context {
                 deps: &mut deps,
@@ -1246,7 +1263,7 @@ impl TomlManifest {
                 nested_paths: &mut nested_paths,
                 config,
                 warnings: &mut warnings,
-                features: &features,
+                features: &cargo_features,
                 platform: None,
                 root: package_root,
             };
@@ -1282,22 +1299,32 @@ impl TomlManifest {
                 .or_else(|| me.build_dependencies2.as_ref());
             process_dependencies(&mut cx, build_deps, Some(DepKind::Build))?;
 
-            for (name, platform) in me.target.iter().flatten() {
-                cx.platform = {
+            for (name, toml_platform) in me.target.iter().flatten() {
+                let platform = {
                     let platform: Platform = name.parse()?;
                     platform.check_cfg_attributes(&mut cx.warnings);
                     Some(platform)
                 };
-                process_dependencies(&mut cx, platform.dependencies.as_ref(), None)?;
-                let build_deps = platform
+                cx.platform = platform.clone();
+                if toml_platform.features.is_some() {
+                    for (feature_name, child_features) in toml_platform.features.as_ref().unwrap() {
+                        features.push(tomlFeature::new_feature(
+                            *feature_name,
+                            platform.clone(),
+                            child_features.to_vec(),
+                        ));
+                    }
+                }
+                process_dependencies(&mut cx, toml_platform.dependencies.as_ref(), None)?;
+                let build_deps = toml_platform
                     .build_dependencies
                     .as_ref()
-                    .or_else(|| platform.build_dependencies2.as_ref());
+                    .or_else(|| toml_platform.build_dependencies2.as_ref());
                 process_dependencies(&mut cx, build_deps, Some(DepKind::Build))?;
-                let dev_deps = platform
+                let dev_deps = toml_platform
                     .dev_dependencies
                     .as_ref()
-                    .or_else(|| platform.dev_dependencies2.as_ref());
+                    .or_else(|| toml_platform.dev_dependencies2.as_ref());
                 process_dependencies(&mut cx, dev_deps, Some(DepKind::Development))?;
             }
 
@@ -1323,20 +1350,8 @@ impl TomlManifest {
 
         let exclude = project.exclude.clone().unwrap_or_default();
         let include = project.include.clone().unwrap_or_default();
-        let empty_features = BTreeMap::new();
 
-        let summary = Summary::new(
-            config,
-            pkgid,
-            deps,
-            me.features
-                .as_ref()
-                .unwrap_or(&empty_features)
-                .iter()
-                .map(|(name, values)| feature::Feature::new_feature(*name, None, values.to_vec()))
-                .collect(),
-            project.links.as_deref(),
-        )?;
+        let summary = Summary::new(config, pkgid, deps, features, project.links.as_deref())?;
         let unstable = config.cli_unstable();
         summary.unstable_gate(unstable.namespaced_features, unstable.weak_dep_features)?;
 
@@ -1373,7 +1388,7 @@ impl TomlManifest {
         };
         let profiles = me.profile.clone();
         if let Some(profiles) = &profiles {
-            profiles.validate(&features, &mut warnings)?;
+            profiles.validate(&cargo_features, &mut warnings)?;
         }
         let publish = match project.publish {
             Some(VecStringOrBool::VecString(ref vecstring)) => Some(vecstring.clone()),
@@ -1430,7 +1445,7 @@ impl TomlManifest {
             replace,
             patch,
             workspace_config,
-            features,
+            cargo_features,
             edition,
             rust_version,
             project.im_a_teapot,
@@ -1660,6 +1675,10 @@ impl TomlManifest {
 
     pub fn features(&self) -> Option<&BTreeMap<InternedString, Vec<InternedString>>> {
         self.features.as_ref()
+    }
+
+    pub fn targets(&self) -> Option<&BTreeMap<String, TomlPlatform>> {
+        self.target.as_ref()
     }
 }
 
@@ -2014,7 +2033,8 @@ impl ser::Serialize for PathValue {
 
 /// Corresponds to a `target` entry, but `TomlTarget` is already used.
 #[derive(Serialize, Deserialize, Debug)]
-struct TomlPlatform {
+pub struct TomlPlatform {
+    features: Option<BTreeMap<InternedString, Vec<InternedString>>>,
     dependencies: Option<BTreeMap<String, TomlDependency>>,
     #[serde(rename = "build-dependencies")]
     build_dependencies: Option<BTreeMap<String, TomlDependency>>,
@@ -2053,6 +2073,12 @@ impl TomlTarget {
         self.crate_type
             .as_ref()
             .or_else(|| self.crate_type2.as_ref())
+    }
+}
+
+impl TomlPlatform {
+    pub fn features(&self) -> Option<&BTreeMap<InternedString, Vec<InternedString>>> {
+        self.features.as_ref()
     }
 }
 

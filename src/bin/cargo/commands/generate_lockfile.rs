@@ -1,6 +1,6 @@
 use crate::command_prelude::*;
 
-use cargo::ops;
+use cargo::{core::compiler::CompileKind, ops};
 
 pub fn cli() -> App {
     subcommand("generate-lockfile")
@@ -12,6 +12,18 @@ pub fn cli() -> App {
 
 pub fn exec(config: &mut Config, args: &ArgMatches<'_>) -> CliResult {
     let ws = args.workspace(config)?;
-    ops::generate_lockfile(&ws)?;
+
+    let targets = if args.is_present("all-targets") {
+        config
+            .shell()
+            .warn("the --all-targets flag has been changed to --target=all")?;
+        vec!["all".to_string()]
+    } else {
+        args._values_of("target")
+    };
+
+    let requested_kinds = CompileKind::from_requested_targets(ws.config(), &*targets)?;
+
+    ops::generate_lockfile(&ws, &*requested_kinds)?;
     Ok(())
 }

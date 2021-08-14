@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashSet};
 use log::debug;
 use termcolor::Color::{self, Cyan, Green, Red};
 
+use crate::core::compiler::CompileKind;
 use crate::core::registry::PackageRegistry;
 use crate::core::resolver::features::{CliFeatures, HasDevUnits};
 use crate::core::{PackageId, PackageIdSpec};
@@ -11,6 +12,8 @@ use crate::ops;
 use crate::util::config::Config;
 use crate::util::CargoResult;
 
+use super::tree::Target;
+
 pub struct UpdateOptions<'a> {
     pub config: &'a Config,
     pub to_update: Vec<String>,
@@ -18,10 +21,12 @@ pub struct UpdateOptions<'a> {
     pub aggressive: bool,
     pub dry_run: bool,
     pub workspace: bool,
+    pub target: Target,
 }
 
-pub fn generate_lockfile(ws: &Workspace<'_>) -> CargoResult<()> {
+pub fn generate_lockfile(ws: &Workspace<'_>, requested_kinds: &[CompileKind]) -> CargoResult<()> {
     let mut registry = PackageRegistry::new(ws.config())?;
+
     let mut resolve = ops::resolve_with_previous(
         &mut registry,
         ws,
@@ -31,12 +36,19 @@ pub fn generate_lockfile(ws: &Workspace<'_>) -> CargoResult<()> {
         None,
         &[],
         true,
+        requested_kinds,
     )?;
     ops::write_pkg_lockfile(ws, &mut resolve)?;
     Ok(())
 }
 
 pub fn update_lockfile(ws: &Workspace<'_>, opts: &UpdateOptions<'_>) -> CargoResult<()> {
+    let requested_targets = match &opts.target {
+        Target::All | Target::Host => Vec::new(),
+        Target::Specific(t) => t.clone(),
+    };
+    let requested_kinds = CompileKind::from_requested_targets(ws.config(), &requested_targets)?;
+
     if opts.aggressive && opts.precise.is_some() {
         anyhow::bail!("cannot specify both aggressive and precise simultaneously")
     }
@@ -53,7 +65,7 @@ pub fn update_lockfile(ws: &Workspace<'_>, opts: &UpdateOptions<'_>) -> CargoRes
         Some(resolve) => resolve,
         None => {
             match opts.precise {
-                None => return generate_lockfile(ws),
+                None => return generate_lockfile(ws, &*requested_kinds),
 
                 // Precise option specified, so calculate a previous_resolve required
                 // by precise package update later.
@@ -68,6 +80,7 @@ pub fn update_lockfile(ws: &Workspace<'_>, opts: &UpdateOptions<'_>) -> CargoRes
                         None,
                         &[],
                         true,
+                        &*requested_kinds,
                     )?
                 }
             }
@@ -123,6 +136,7 @@ pub fn update_lockfile(ws: &Workspace<'_>, opts: &UpdateOptions<'_>) -> CargoRes
         Some(&to_avoid),
         &[],
         true,
+        &*requested_kinds,
     )?;
 
     // Summarize what is changing for the user.

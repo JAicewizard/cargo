@@ -1,7 +1,7 @@
 use crate::core::compiler::{
     BuildOutput, CompileKind, CompileMode, CompileTarget, Context, CrateType,
 };
-use crate::core::{Dependency, Target, TargetKind, Workspace};
+use crate::core::{feature, Dependency, Target, TargetKind, Workspace};
 use crate::util::config::{Config, StringList, TargetConfig};
 use crate::util::{CargoResult, Rustc};
 use anyhow::Context as _;
@@ -780,6 +780,23 @@ impl<'cfg> RustcTargetData<'cfg> {
         // If this dependency is only available for certain platforms,
         // make sure we're only enabling it for that platform.
         let platform = match dep.platform() {
+            Some(p) => p,
+            None => return true,
+        };
+        let name = self.short_name(&kind);
+        platform.matches(name, self.cfg(kind))
+    }
+
+    /// Whether a feature is activated for the host or target platform,
+    /// specified by `CompileKind`.
+    pub fn feature_platform_activated(
+        &self,
+        feature: &feature::Feature,
+        kind: CompileKind,
+    ) -> bool {
+        // If this dependency is only available for certain platforms,
+        // make sure we're only enabling it for that platform.
+        let platform = match feature.platform() {
             Some(p) => p,
             None => return true,
         };

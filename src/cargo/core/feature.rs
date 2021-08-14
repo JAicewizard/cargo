@@ -9,6 +9,8 @@ use std::rc::Rc;
 
 use crate::util::interning::InternedString;
 
+use super::compiler::CompileKind;
+use super::compiler::RustcTargetData;
 use super::FeatureValue;
 
 //TODO: Maybe add `.contains()` on vec??
@@ -85,7 +87,7 @@ impl Feature {
         self.inner.platform.as_ref()
     }
 
-    pub fn children_values(&self) -> &Vec<FeatureValue> {
+    pub fn children_values(&self) -> &[FeatureValue] {
         &self.inner.child_feature_values
     }
 
@@ -127,9 +129,26 @@ impl fmt::Display for Feature {
 }
 
 pub fn contains_feature(vec: &[Feature], name: InternedString) -> bool {
-    vec.iter().find(|f| f.name() == name).is_some()
+    get_feature(vec, name).is_some()
 }
 
 pub fn get_feature(vec: &[Feature], name: InternedString) -> Option<&Feature> {
     vec.iter().find(|f| f.name() == name)
+}
+
+pub fn get_feature_target(
+    vec: &[Feature],
+    name: InternedString,
+    target_data: &RustcTargetData<'_>,
+    requested_kinds: &[CompileKind],
+) -> Option<Feature> {
+    vec.iter()
+        .find(|f| {
+            f.name() == name
+                && requested_kinds
+                    .iter()
+                    .find(|kind| target_data.feature_platform_activated(*f, **kind))
+                    .is_some()
+        })
+        .cloned()
 }

@@ -645,7 +645,10 @@ where
 
 /// Helper to convert features to a BTreeSet.
 fn feature_set(features: &Rc<BTreeSet<FeatureValue>>) -> BTreeSet<String> {
-    features.iter().map(|s| s.to_string()).collect()
+    features
+        .iter()
+        .map(|s| s.to_string().as_str().to_string())
+        .collect()
 }
 
 /// Helper to get the executable names from a filter.

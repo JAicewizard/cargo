@@ -350,7 +350,11 @@ fn install_one(
 
     config.shell().status("Installing", &pkg)?;
 
-    check_yanked_install(&ws)?;
+    let requested_kinds = match &opts.target_rustc_args {
+        Some(targets) => CompileKind::from_requested_targets(config, &**targets)?,
+        None => vec![CompileKind::Host],
+    };
+    check_yanked_install(&ws, &*requested_kinds)?;
 
     let exec: Arc<dyn Executor> = Arc::new(DefaultExecutor);
     let compile = ops::compile_ws(&ws, opts, &exec).with_context(|| {
@@ -650,14 +654,15 @@ fn parse_semver_flag(v: &str) -> CargoResult<VersionReq> {
     }
 }
 
-fn check_yanked_install(ws: &Workspace<'_>) -> CargoResult<()> {
+fn check_yanked_install(ws: &Workspace<'_>, requested_kinds: &[CompileKind]) -> CargoResult<()> {
     if ws.ignore_lock() || !ws.root().join("Cargo.lock").exists() {
         return Ok(());
     }
     // It would be best if `source` could be passed in here to avoid a
     // duplicate "Updating", but since `source` is taken by value, then it
     // wouldn't be available for `compile_ws`.
-    let (pkg_set, resolve) = ops::resolve_ws(ws)?;
+
+    let (pkg_set, resolve) = ops::resolve_ws(ws, requested_kinds)?;
     let mut sources = pkg_set.sources_mut();
 
     // Checking the yanked status involves taking a look at the registry and

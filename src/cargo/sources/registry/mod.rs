@@ -270,6 +270,8 @@ pub struct RegistryPackage<'a> {
     /// will fail to load due to not being able to parse the new syntax, even
     /// with a `Cargo.lock` file.
     features2: Option<BTreeMap<InternedString, Vec<InternedString>>>,
+    //TODO:
+    //features3: Option<BTreeMap<InternedString, (Option<Platform>, Vec<InternedString>)>>,
     cksum: String,
     /// If `true`, Cargo will skip this version when resolving.
     ///

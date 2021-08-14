@@ -62,9 +62,12 @@ version. This may also occur with an optional dependency that is not enabled.";
 ///
 /// This is a simple interface used by commands like `clean`, `fetch`, and
 /// `package`, which don't specify any options or features.
-pub fn resolve_ws<'a>(ws: &Workspace<'a>) -> CargoResult<(PackageSet<'a>, Resolve)> {
+pub fn resolve_ws<'a>(
+    ws: &Workspace<'a>,
+    requested_targets: &[CompileKind],
+) -> CargoResult<(PackageSet<'a>, Resolve)> {
     let mut registry = PackageRegistry::new(ws.config())?;
-    let resolve = resolve_with_registry(ws, &mut registry)?;
+    let resolve = resolve_with_registry(ws, &mut registry, requested_targets)?;
     let packages = get_resolved_packages(&resolve, registry)?;
     Ok((packages, resolve))
 }
@@ -82,7 +85,7 @@ pub fn resolve_ws<'a>(ws: &Workspace<'a>) -> CargoResult<(PackageSet<'a>, Resolv
 pub fn resolve_ws_with_opts<'cfg>(
     ws: &Workspace<'cfg>,
     target_data: &RustcTargetData<'cfg>,
-    requested_targets: &[CompileKind],
+    requested_kinds: &[CompileKind],
     cli_features: &CliFeatures,
     specs: &[PackageIdSpec],
     has_dev_units: HasDevUnits,
@@ -95,7 +98,7 @@ pub fn resolve_ws_with_opts<'cfg>(
     } else if ws.require_optional_deps() {
         // First, resolve the root_package's *listed* dependencies, as well as
         // downloading and updating all remotes and such.
-        let resolve = resolve_with_registry(ws, &mut registry)?;
+        let resolve = resolve_with_registry(ws, &mut registry, requested_kinds)?;
         // No need to add patches again, `resolve_with_registry` has done it.
         add_patches = false;
 
@@ -141,6 +144,7 @@ pub fn resolve_ws_with_opts<'cfg>(
         None,
         specs,
         add_patches,
+        requested_kinds,
     )?;
 
     let pkg_set = get_resolved_packages(&resolved_with_overrides, registry)?;
@@ -154,7 +158,7 @@ pub fn resolve_ws_with_opts<'cfg>(
         &resolved_with_overrides,
         &member_ids,
         has_dev_units,
-        requested_targets,
+        &*requested_kinds,
         target_data,
         force_all_targets,
     )?;
@@ -167,7 +171,7 @@ pub fn resolve_ws_with_opts<'cfg>(
         &pkg_set,
         cli_features,
         specs,
-        requested_targets,
+        &*requested_kinds,
         feature_opts,
     )?;
 
@@ -182,6 +186,7 @@ pub fn resolve_ws_with_opts<'cfg>(
 fn resolve_with_registry<'cfg>(
     ws: &Workspace<'cfg>,
     registry: &mut PackageRegistry<'cfg>,
+    requested_kinds: &[CompileKind],
 ) -> CargoResult<Resolve> {
     let prev = ops::load_pkg_lockfile(ws)?;
     let mut resolve = resolve_with_previous(
@@ -193,6 +198,7 @@ fn resolve_with_registry<'cfg>(
         None,
         &[],
         true,
+        requested_kinds,
     )?;
 
     if !ws.is_ephemeral() && ws.require_optional_deps() {
@@ -225,6 +231,7 @@ pub fn resolve_with_previous<'cfg>(
     to_avoid: Option<&HashSet<PackageId>>,
     specs: &[PackageIdSpec],
     register_patches: bool,
+    requested_kinds: &[CompileKind],
 ) -> CargoResult<Resolve> {
     // We only want one Cargo at a time resolving a crate graph since this can
     // involve a lot of frobbing of the global caches.
@@ -439,6 +446,8 @@ pub fn resolve_with_previous<'cfg>(
     };
 
     ws.preload(registry);
+    let target_data = RustcTargetData::new(ws, &requested_kinds)?;
+
     let mut resolved = resolver::resolve(
         &summaries,
         &replace,
@@ -448,6 +457,8 @@ pub fn resolve_with_previous<'cfg>(
         ws.unstable_features()
             .require(Feature::public_dependency())
             .is_ok(),
+        &target_data,
+        &*requested_kinds,
     )?;
     resolved.register_used_patches(&registry.patches());
     if register_patches {

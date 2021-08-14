@@ -1,3 +1,4 @@
+use crate::core::compiler::CompileKind;
 use crate::core::shell::Verbosity;
 use crate::core::{GitReference, Workspace};
 use crate::ops;
@@ -20,7 +21,11 @@ pub struct VendorOptions<'a> {
     pub extra: Vec<PathBuf>,
 }
 
-pub fn vendor(ws: &Workspace<'_>, opts: &VendorOptions<'_>) -> CargoResult<()> {
+pub fn vendor(
+    ws: &Workspace<'_>,
+    opts: &VendorOptions<'_>,
+    requested_kinds: &[CompileKind],
+) -> CargoResult<()> {
     let config = ws.config();
     let mut extra_workspaces = Vec::new();
     for extra in opts.extra.iter() {
@@ -29,7 +34,8 @@ pub fn vendor(ws: &Workspace<'_>, opts: &VendorOptions<'_>) -> CargoResult<()> {
         extra_workspaces.push(ws);
     }
     let workspaces = extra_workspaces.iter().chain(Some(ws)).collect::<Vec<_>>();
-    let vendor_config = sync(config, &workspaces, opts).with_context(|| "failed to sync")?;
+    let vendor_config =
+        sync(config, &workspaces, opts, requested_kinds).with_context(|| "failed to sync")?;
 
     if config.shell().verbosity() != Verbosity::Quiet {
         crate::drop_eprint!(
@@ -72,6 +78,7 @@ fn sync(
     config: &Config,
     workspaces: &[&Workspace<'_>],
     opts: &VendorOptions<'_>,
+    requested_kinds: &[CompileKind],
 ) -> CargoResult<VendorConfig> {
     let canonical_destination = opts.destination.canonicalize();
     let canonical_destination = canonical_destination.as_deref().unwrap_or(opts.destination);
@@ -104,7 +111,7 @@ fn sync(
     // crate to work with.
     for ws in workspaces {
         let (packages, resolve) =
-            ops::resolve_ws(ws).with_context(|| "failed to load pkg lockfile")?;
+            ops::resolve_ws(ws, requested_kinds).with_context(|| "failed to load pkg lockfile")?;
 
         packages
             .get_many(resolve.iter())
@@ -136,7 +143,7 @@ fn sync(
     // tables about them.
     for ws in workspaces {
         let (packages, resolve) =
-            ops::resolve_ws(ws).with_context(|| "failed to load pkg lockfile")?;
+            ops::resolve_ws(ws, requested_kinds).with_context(|| "failed to load pkg lockfile")?;
 
         packages
             .get_many(resolve.iter())
