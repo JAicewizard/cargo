@@ -71,6 +71,7 @@ Each new feature described below should explain how to use it.
     * [public-dependency](#public-dependency) — Allows dependencies to be classified as either public or private.
     * [Namespaced features](#namespaced-features) — Separates optional dependencies into a separate namespace from regular features, and allows feature names to be the same as some dependency name.
     * [Weak dependency features](#weak-dependency-features) — Allows setting features for dependencies without enabling optional dependencies.
+    * [Target specific features](#target-specific-features) — Allows listing features on a per target basis.
 * Output behavior
     * [out-dir](#out-dir) — Adds a directory where artifacts are copied to.
     * [terminal-width](#terminal-width) — Tells rustc the width of the terminal so that long diagnostic messages can be truncated to be more readable.
@@ -970,6 +971,41 @@ std = ["serde?/std"]
 In this example, the `std` feature enables the `std` feature on the `serde`
 dependency. However, unlike the normal `serde/std` syntax, it will not enable
 the optional dependency `serde` unless something else has included it.
+
+### Target specific features
+* Original Issue: [#1197](https://github.com/rust-lang/cargo/issues/1197)
+
+Example:
+```toml
+[target.'cfg(not(target_os = "windows"))'.features]
+default = ["general_feature"]
+
+[target.'cfg(target_os = "windows")'.features]
+default = ["winonly_replacement"]
+```
+
+This allows using diferent features on a target basis. This can be used to
+have a default backend when using features for backend-enablement.
+
+```toml
+default = ["default-backend"]
+
+gtk = [...]
+x11 = [...]
+macos = [...]
+win = [...]
+
+[target.'cfg(target_os="linux")'.features]
+default-backend = ["gtk", "x11"]
+[target.'cfg(target_os="macos")'.features]
+default-backend = ["macos"]
+[target.'cfg(target_os="windows")'.features]
+default-backend = ["win"]
+```
+
+This second example allows the user to select the included backends using features.
+There are target specific defaults to avoid the user headaches, each using the native
+backend for that target.
 
 ### per-package-target
 * Tracking Issue: [#9406](https://github.com/rust-lang/cargo/pull/9406)

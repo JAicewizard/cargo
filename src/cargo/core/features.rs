@@ -408,6 +408,9 @@ features! {
 
     // Allow specifying different binary name apart from the crate name
     (unstable, different_binary_name, "", "reference/unstable.html#different-binary-name"),
+
+    // Allow specifying features on a target
+    (unstable, target_specific_features, "", ""),
 }
 
 pub struct Feature {

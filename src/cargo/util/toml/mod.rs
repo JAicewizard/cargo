@@ -1306,13 +1306,20 @@ impl TomlManifest {
                     Some(platform)
                 };
                 cx.platform = platform.clone();
-                if toml_platform.features.is_some() {
-                    for (feature_name, child_features) in toml_platform.features.as_ref().unwrap() {
-                        features.push(tomlFeature::new_feature(
-                            *feature_name,
-                            platform.clone(),
-                            child_features.to_vec(),
-                        ));
+                if cargo_features
+                    .require(Feature::target_specific_features())
+                    .is_ok()
+                {
+                    if toml_platform.features.is_some() {
+                        for (feature_name, child_features) in
+                            toml_platform.features.as_ref().unwrap()
+                        {
+                            features.push(tomlFeature::new_feature(
+                                *feature_name,
+                                platform.clone(),
+                                child_features.to_vec(),
+                            ));
+                        }
                     }
                 }
                 process_dependencies(&mut cx, toml_platform.dependencies.as_ref(), None)?;
